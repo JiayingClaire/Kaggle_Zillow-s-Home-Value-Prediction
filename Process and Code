@@ -1,3 +1,4 @@
+########################################
 # Step 1: Reading and Reviewing the Data
 # set work directory
 setwd("C:\\csv_data")
@@ -33,4 +34,175 @@ summary(train)
 write.csv(train, 'train_property_20180804.csv')
 train <- read.csv("train_property_20180804.csv", stringsAsFactors = FALSE)
 
+###################################
 # Step 2: Dealing with Missing Data
+
+# Check how many NAs in each feature
+# Firstly write a function to check for one column
+count_na <- function(x){length(which(is.na(x)))}
+
+# An alternative way: count_na <- function(x){sum(is.na(x))}
+length(which(is.na(train$calculatedfinishedsquarefeet)))
+sum(is.na(train$calculatedfinishedsquarefeet))
+
+# Apply the function to all columns in two ways:
+# 1: using a loop
+MissingCount <- c()
+
+for(column in colnames(train)){
+#print(column)
+MissingCount <- c(MissingCount, count_na(train[, column]))
+}
+
+MissingCount_df <- data.frame("Name" = colnames(train), "MissingCount" = MissingCount)
+MissingCount_df$MissingPercent <- round(MissingCount_df$MissingCount / nrow(train), 2)
+MissingCount_df[order(MissingCount_df$MissingPercent, decreasing = T), ]
+
+# 2: vectorization
+MissingCount2 <- data.frame(apply(train, 2, count_na))
+MissingCount2$MissingPercent <- round(MissingCount2[,1]/nrow(train),2)
+MissingCount2[order(MissingCount2$MissingPercent, decreasing = T), ]
+
+# Excluding the features that have too many missing values
+KeepCol <- rownames(MissingCount2[MissingCount2$MissingPercent <= 0.2,])
+train_sub <- train[, KeepCol]
+dim(train_sub)
+
+# there are some features in wrong data type
+# for example, the program may think regionidcounty is a numeric feature
+# but in fact we should treat it as categorical
+str(train_sub)
+
+# Coerce the feaures into right data type
+char_cols = c('fips', 
+		 'propertylandusetypeid', 
+		 'rawcensustractandblock', 
+		 'regionidcounty', 
+		 'assessmentyear', 
+		 'regionidzip', 
+		 'censustractandblock', 
+		 'regionidcity')  
+train_sub[,char_cols] <- apply(train_sub[,char_cols], 2, function(x) as.character(x))
+
+train_sub$taxdelinquencyflag <- ifelse(train_sub$taxdelinquencyflag != "", TRUE, FALSE)
+
+bool_cols <- c("hashottuborspa", "fireplaceflag")
+train_sub[,bool_cols] <- apply(train_sub[,bool_cols], 2, function(x) as.logical(x))
+str(train_sub)
+
+table(train_sub$hashottuborspa)
+table(train_sub$fireplaceflag)
+table(train_sub$taxdelinquencyflag)
+
+#############################################
+# Learning point: how to treat missing values
+	# (1) Remove features with too many missing value (>30%), 
+	# (2) For categorical features, add new level to represent NAs  
+	# (3) Imputation
+	# library(mice)
+	# There are different ways to impute missing values, the commonly used ones are:
+	# a. For numerical features, impute by average, median, or 0 (choice based on domain knowledge)
+		beMedian <- function(x){ifelse(is.na(x), median(x, na.rm = T), x)}
+		beMean <- function(x){ifelse(is.na(x), mean(x, na.rm = T), x)}
+		beZero <- function(x){ifelse(is.na(x), 0, x)}
+	# b. For categorical features, impute by mode (the biggest category), or create a new category "Unknown"
+		beUnknown <- function(x){ifelse(is.na(x), "Unknown", x)}	
+		beMode <- function (x) {
+				  xtab <- table(x)
+				  ifelse(is.na(x), names(which(xtab == max(xtab))), x)
+				  }
+	# c. For boolean features
+		beOpposite <- function(x){ifelse(is.na(x), FALSE, x)}
+		
+	# There are also model based imputations, some libraries can help, e.g. the "mice" package
+		# Random forest missing value imputation:
+    # Intuition: start by replacing NAs by mean, then iteratively run random forest model --> compute proximity matrix
+    # --> use it as weight to update imputation until OOB is larger than last iteration
+		library(mice)
+		methods(mice)
+    train_imputed <- complete(mice(train_sub, defaultMethod=c('rf')))
+
+	# Comparison: Simple imputation vs model based imputation
+		# Simple method imputation replies more on domain knowledge, and involves more steps
+		# Model based method is easier to implement, but sometimes ignores the common sense. 
+			# e.g. if missing value is because of lack of knowledge - needs to be imputed by new category "Unknown", 
+			# imputing by known categories is not a good idea
+		# The model output will tell which way is more suitable for this scenario.
+
+#########################################
+# Step 3: EDA - Explorative Data Analysis
+
+# 1) Numeric variables
+# 2) Numeric variable with response 
+# 3) Categorical variables
+# 4) Categorical varialbe with response
+
+# 1) numeric variables
+mean(train_sub$logerror)
+sd(train_sub$logerror)
+median(train_sub$logerror)
+quantile(train_sub$logerror, c(0.1, 0.25, 0.5, 0.75, 0.9))
+summary(train_sub$logerror)
+plot(density(train_sub$logerror)) #kernel smoothing
+hist(train_sub$logerror)
+
+# 2) numerical var with output (correlation)
+library(corrplot)
+# if there is missing value in the data, correlation algorithm will not work
+correlations <- cor(train_sub[, c('logerror', 'bathroomcnt', 'bedroomcnt', 'roomcnt',
+                              'taxamount', 'structuretaxvaluedollarcnt', 'calculatedfinishedsquarefeet',
+                              'calculatedbathnbr', 'fullbathcnt', 'finishedsquarefeet12',
+                              'lotsizesquarefeet')])
+# only on complete cases 
+correlations <- cor(train_sub[, c('logerror', 'bathroomcnt', 'bedroomcnt', 'roomcnt',
+                              'taxamount', 'structuretaxvaluedollarcnt', 'calculatedfinishedsquarefeet',
+                              'calculatedbathnbr', 'fullbathcnt', 'finishedsquarefeet12', 'lotsizesquarefeet')], 
+                    use = "complete.obs")
+corrplot(correlations)
+corrplot(correlations, method = "square", type = 'upper')
+?corrplot
+
+# 3) categorical variables, transactiondate for example
+table(train_sub$transactiondate)
+barplot(table(train_sub$transactiondate))
+
+# From the barplot, we see the transaction volume from Sep to Dec is lower. Consider transform date into month
+# Extract month from datetime (there are many alternative ways)
+train_sub$txnmonth <- format(as.Date(train_sub$transactiondate), "%m")
+table(train_sub$txnmonth)
+barplot(table(train_sub$txnmonth))
+
+# 4) categorical var with output
+with(train_sub, plot(as.Date(transactiondate), logerror, pch = 20))
+# (this is equivalent to)
+plot(as.Date(train_sub$transactiondate), train_sub$logerror, pch = 20)
+
+# Compare output between 2 months
+# Without removing outliers (it is hard to observe from boxplot)
+boxplot(subset(train_sub, txnmonth == '01')$logerror,
+        subset(train_sub, txnmonth == '06')$logerror)
+# Removing outliers
+boxplot(subset(train_sub, txnmonth == '01' & abs(logerror) < 0.09)$logerror,
+        subset(train_sub, txnmonth == '06' & abs(logerror) < 0.09)$logerror)
+
+# A cleaner way to compare across all months using bwplot() from lattice library
+library(lattice)
+bwplot(logerror ~ txnmonth, data = train_sub)
+bwplot(logerror ~ txnmonth, data = subset(train_sub, abs(logerror) < 0.09))
+
+# Or, compute the median by month and visualize the points
+err.month <- by(train_sub, train_sub$txnmonth, function(x) {
+  return(median(x$logerror))})
+  
+  # aggreate
+  # (sqldf) sqldf
+  # (dplyr) summarise
+  
+plot(names(err.month), err.month, type = 'l')
+points(err.month, pch = 2, col ="blue")
+
+################################
+# Step 4: 
+
+
+
