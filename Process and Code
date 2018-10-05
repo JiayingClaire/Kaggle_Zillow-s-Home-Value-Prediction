@@ -201,8 +201,81 @@ err.month <- by(train_sub, train_sub$txnmonth, function(x) {
 plot(names(err.month), err.month, type = 'l')
 points(err.month, pch = 2, col ="blue")
 
+###################################
+# Step 4: Constructing new features
+
+# taxvaluedollarcnt = structuretaxvaluedollarcnt + landtaxvaluedollarcnt
+# To double confirm the result, an a/b line with a slope of 1 is used here to check if all the points are on abline.
+with(train_sub, plot(structuretaxvaluedollarcnt + landtaxvaluedollarcnt, taxvaluedollarcnt))
+plot(train_sub$structuretaxvaluedollarcnt + train_sub$landtaxvaluedollarcnt, train_sub$taxvaluedollarcnt)
+abline(a = 0, b = 1, col = "red")
+
+# taxamount/taxvaluedollarcnt ~ tax rate, check the outliers
+summary(with(train_sub, taxamount/taxvaluedollarcnt))
+with(train_sub, plot(taxamount/taxvaluedollarcnt, logerror))
+
+# Plot after excluding the outliers. It is clear that tax rate is correlated with log error.
+with(subset(train_sub,taxamount/taxvaluedollarcnt <= 0.1),
+     plot(taxamount/taxvaluedollarcnt, logerror))
+
+# Calculate the correlation coefficient between output and tax rate
+with(subset(train_sub,taxamount/taxvaluedollarcnt <= 0.1), 
+     cor(logerror, taxamount/taxvaluedollarcnt, use = 'complete.obs')) #-0.04
+
+# Calculate the correlation coefficient between output and tax amount
+with(subset(train_sub,taxamount/taxvaluedollarcnt <= 0.1), 
+     cor(logerror, taxamount, use = 'complete.obs')) # -0.004
+	 
+# Calculate the correlation coefficient between output and taxable value	 
+with(subset(train_sub,taxamount/taxvaluedollarcnt <= 0.1), 
+     cor(logerror, taxvaluedollarcnt, use = 'complete.obs')) # 0.004
+
+# Calculated finishedsquarefeet/lotsizesquarefeet ~ % sqft house / land
+train_sub$living.per <- with(train_sub, calculatedfinishedsquarefeet/lotsizesquarefeet)
+summary(train_sub$living.per)
+
+with(subset(train_sub,living.per <= 1),
+     plot(living.per, logerror))
+
+with(train_sub, cor(logerror, calculatedfinishedsquarefeet, use = 'complete.obs'))	#0.03
+with(train_sub, cor(logerror, lotsizesquarefeet, use = 'complete.obs'))	#0.004
+with(train_sub, cor(logerror, calculatedfinishedsquarefeet/lotsizesquarefeet,
+                use = 'complete.obs'))		#0.003
+
+# Exam roomcnt >= sum of bathroomcnt and bedroomcnt
+# Technically, all the points should be in the upper triage area
+with(train_sub, plot(bathroomcnt + bedroomcnt, roomcnt))
+abline(a = 0, b = 1)
+summary(with(train_sub, bathroomcnt + bedroomcnt - roomcnt))
+train_sub$room_wrong = train_sub$roomcnt < train_sub$bathroomcnt + train_sub$bedroomcnt
+bwplot(room_wrong ~ logerror, data = train_sub)
+bwplot(room_wrong ~ logerror, data = subset(train_sub, abs(logerror) < 0.09))
+
+# Apply a t test to check whether "wrong room count" observations have higher absolute log error rate
+with(train_sub, t.test(logerror ~ room_wrong))
+
+# conclusion: fail to reject mean log error is equal for wrong and correct room count
+
+				
+# Exam the fips
+table(train_sub$fips)
+
+by(train_sub, train_sub$fip, function(x) {
+  return(median(x$logerror))})
+
+bwplot(fips ~ logerror, data = train_sub)
+bwplot(fips ~ logerror, data = subset(train_sub, abs(logerror) < 0.09))
+
+summary(aov(logerror~fips, train_sub))
+#reject the null that mean log error is equal across three fips
+
+with(train_sub, t.test(logerror ~ (fips == '6037')))
+with(train_sub, t.test(logerror ~ (fips == '6059')))
+with(train_sub, t.test(logerror ~ (fips == '6111')))
+# The t test results suggest that fip 6111 has higher error than the rest of population
+# (maybe because of too few data points)
+# Better include the boolean feature indicating whether fips = 6111.
+# Also if other feature having level with sparse data - indicating large log.error
+
 ################################
-# Step 4: 
-
-
-
+# Step 5: Run models
