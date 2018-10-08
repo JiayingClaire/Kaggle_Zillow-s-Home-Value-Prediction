@@ -280,7 +280,7 @@ with(train_sub, t.test(logerror ~ (fips == '6111')))
 ################################
 # Step 5: Run models
 
-# simple linear regression 
+# model 1: simple linear regression 
 
 mod0 <- lm(logerror ~ taxvaluedollarcnt, data = train_imputed)
 with(train_imputed, plot(taxvaluedollarcnt, logerror))
@@ -380,3 +380,12 @@ pred_error2 <- train_imputed[test_index, "logerror"] - pred2
 rmse_test2 <- sqrt(mean(pred_error2^2))
 rmse_test2
 rmse_test
+
+# It is statistically meaningless to calculate the coefficient due to multicollinearity between the variables. 
+# Even if we calculate the statistics, the correlation coefficient and the result of F-/T - Test is not reliable. 
+# Thus, it's better to use nonlinear models in this case.
+
+##############################
+# model 2: random forecast
+
+
