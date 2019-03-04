@@ -1,0 +1,160 @@
+---
+title: "Zillow_Data_Cleaning"
+author: "Claire Jiaying Wu"
+date: "10/13/2018"
+output:
+  prettydoc::html_pretty:
+    theme: cayman
+    highlight: github
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(echo = TRUE, eval = TRUE, comment="", warning = FALSE, message = FALSE, tidy.opts=list(width.cutoff=55), tidy = TRUE)
+```
+
+```{r libraries}
+library(prettydoc)
+library(data.table)
+library(DT)
+library(stringr)
+library(ggpubr)
+library(corrplot)
+library(caret)
+library(RANN)
+library(mice)
+library(dplyr)
+```
+
+## Data Cleaning Processes
+
+```{r read_data}
+train_raw <- read.csv("../data/train_2016_v2.csv", stringsAsFactors = FALSE)
+property <- read.csv("../data/properties_2016.csv", stringsAsFactors = FALSE)
+train <- merge(train_raw, property, by = "parcelid")
+dim(train)
+summary(train)
+```
+
+Count the NAs and remove the columns with over 80% NAs
+
+```{r}
+# function of counting NAs
+count_na = function(x){sum(is.na(x))}
+na_count = data.frame(apply(train, 2, count_na))
+
+# computing NA%
+na_count$naPercent <- round(na_count[,1]/nrow(train),2)
+na_count[order(na_count$naPercent, decreasing = T), ]
+
+# excluding the features that have too many missing values
+KeepCol <- rownames(na_count[na_count$naPercent <= 0.2,])
+train_sub <- train[, KeepCol]
+
+dim(train_sub)
+str(train_sub)
+```
+
+Coerce the variables into right data types
+
+```{r}
+char_cols = c('fips', 'propertylandusetypeid', 'rawcensustractandblock', 'regionidcounty',
+              'assessmentyear', 'regionidzip', 'censustractandblock', 'regionidcity')  
+train_sub[,char_cols] = apply(train_sub[,char_cols], 2, function(x) as.character(x))
+train_sub$taxdelinquencyflag = ifelse(train_sub$taxdelinquencyflag != "", TRUE, FALSE)
+bool_cols = c("hashottuborspa", "fireplaceflag")
+train_sub[,bool_cols] <- apply(train_sub[,bool_cols], 2, function(x) as.logical(x))
+train_sub$yearbuilt = as.character(train_sub$yearbuilt)
+
+str(train_sub)
+```
+
+Imputate missing values with simple imputation
+
+```{r}
+beMedian <- function(x){ifelse(is.na(x), median(x, na.rm = T), x)}
+beMean <- function(x){ifelse(is.na(x), mean(x, na.rm = T), x)}
+beMode <- function (x) {
+				  xtab <- table(x)
+				  ifelse(is.na(x), names(which(xtab == max(xtab))), x)
+				  }
+beOpposite <- function(x){ifelse(is.na(x), FALSE, x)}
+
+missing_impute <- function(dataframe){
+  col_class <- sapply(dataframe, class)
+  col_num <- names(col_class[col_class %in% c("numeric", "integer")])
+  col_cat <- names(col_class[col_class %in% c("character", "factor")])
+  col_log <- names(col_class[col_class %in% c("logical")])
+
+  dataframe[, col_num] <- apply(dataframe[, col_num], 2, beMedian)
+  dataframe[, col_cat] <- apply(dataframe[, col_cat], 2, beMode)
+  dataframe[, col_log] <- apply(dataframe[, col_log], 2, beOpposite)
+  return(cbind(dataframe[, col_num], dataframe[, col_cat], dataframe[, col_log]))
+}
+
+train_imputed <- missing_impute(train_sub)
+train_imputed[is.na(train_imputed)]
+```
+
+```{r}
+write.csv(train_imputed, file = "../cleaning/property_cleaned.csv", row.names = F)
+```
+
+## EDA
+
+Density plot for the numeric variable with kernel smoothing:
+
+```{r}
+plot(density(train_sub$logerror)) 
+```
+
+Explore correlations between numerical variables and output with corrplot:
+
+```{r}
+correlations <- cor(train_imputed[, c('logerror', 'bathroomcnt', 'bedroomcnt', 'roomcnt', 'taxamount', 'structuretaxvaluedollarcnt', 'calculatedfinishedsquarefeet', 'calculatedbathnbr', 'fullbathcnt', 'finishedsquarefeet12', 'latitude', 'longitude', 'lotsizesquarefeet', 'taxvaluedollarcnt', 'landtaxvaluedollarcnt')])
+corrplot(correlations, method = "circle", type = 'upper')
+# No numeric independent variable has high correlation with the output.
+```
+
+Explore the categorical variables (by month):
+
+```{r}
+# extract month from transcation date
+train_sub$txnmonth <- format(as.Date(train_sub$transactiondate), "%m")
+table(train_sub$txnmonth)
+barplot(table(train_sub$txnmonth))
+
+# compute the median of log error by month and visualize the points
+err.month <- by(train_sub, train_sub$txnmonth, function(x) {return(median(x$logerror))})
+plot(names(err.month), err.month, type = 'l')
+points(err.month, pch = 4, col ="blue")
+```
+
+Explore the categorical variables (by yearbuilt):
+
+```{r}
+table(train_imputed$yearbuilt)
+barplot(table(train_imputed$yearbuilt))
+```
+More targets were built during 1949-1991, based on the barplot. Consider to dip deep.
+
+Review the logerror mean distribution:
+
+```{r}
+train_imputed %>% 
+  group_by(yearbuilt) %>% 
+  summarize(mean_abs_logerror = mean(abs(logerror)),n()) %>% 
+  ggplot(aes(x=yearbuilt,y=mean_abs_logerror))+
+  geom_smooth(color="grey40")+
+  geom_point(color="blue")+coord_cartesian(ylim=c(0,0.25))+theme_bw()
+```
+
+Check the median of logerror acorss years:
+
+```{r}
+median_year <- by(train_imputed, train_imputed$yearbuilt, function(x) {return(median(x$logerror))})
+plot(names(median_year), median_year, type = 'l')
+```
+
+Here, we can tell from the plot that one of the features could be yearbuilt, meaning for the very old houses, the logerror tends to be higher than those relatively new houses.
+
