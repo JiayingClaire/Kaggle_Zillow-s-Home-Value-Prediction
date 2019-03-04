@@ -395,7 +395,7 @@ Density plot for the numeric variable with kernel smoothing:
 plot(density(train_sub$logerror)) 
 ```
 
-![](Zillow_Data_Cleaning_files/figure-markdown_github/unnamed-chunk-5-1.png)
+![](Zillow_Data_Cleaning_files\figure-markdown_github\unnamed-chunk-5-1.png)
 
 Explore correlations between numerical variables and output with corrplot:
 
